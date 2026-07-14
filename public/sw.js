@@ -1,8 +1,9 @@
 const CACHE_NAME = 'ilac-takip-v1';
+const BASE_PATH = '/ilac-takip/';
 const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json'
+  BASE_PATH,
+  BASE_PATH + 'index.html',
+  BASE_PATH + 'manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
@@ -40,7 +41,7 @@ self.addEventListener('notificationclick', (event) => {
       if (clientList.length > 0) {
         clientList[0].focus();
       } else {
-        self.clients.openWindow('/');
+        self.clients.openWindow(BASE_PATH);
       }
     })
   );
@@ -53,8 +54,8 @@ self.addEventListener('message', (event) => {
     setTimeout(() => {
       self.registration.showNotification('İlaç Hatırlatması', {
         body: `${medicationName} (${dosage}) ilacınızı alma zamanı geldi!`,
-        icon: '/icon-192.svg',
-        badge: '/icon-192.svg',
+        icon: BASE_PATH + 'icon-192.svg',
+        badge: BASE_PATH + 'icon-192.svg',
         tag: `med-${medicationId}`,
         requireInteraction: true,
         actions: [
