@@ -2,7 +2,7 @@
   "name": "İlaç Takip",
   "short_name": "İlaçTakip",
   "description": "İlaç ve tansiyon takip uygulaması",
-  "start_url": "/",
+  "start_url": "/ilac-takip/",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#4f46e5",
