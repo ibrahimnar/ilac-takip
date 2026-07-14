@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ilac-takip-v1';
+const CACHE_NAME = 'ilac-takip-v2';
 const BASE_PATH = '/ilac-takip/';
 const urlsToCache = [
   BASE_PATH,
