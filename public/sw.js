@@ -54,8 +54,8 @@ self.addEventListener('message', (event) => {
     setTimeout(() => {
       self.registration.showNotification('İlaç Hatırlatması', {
         body: `${medicationName} (${dosage}) ilacınızı alma zamanı geldi!`,
-        icon: BASE_PATH + 'icon-192.svg',
-        badge: BASE_PATH + 'icon-192.svg',
+        icon: BASE_PATH + 'icon-192.png',
+        badge: BASE_PATH + 'icon-192.png',
         tag: `med-${medicationId}`,
         requireInteraction: true,
         actions: [
