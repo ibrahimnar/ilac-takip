@@ -113,10 +113,12 @@ Mevcut `setTimeout` SW içinde ölüyor. Önerilen yaklaşım:
 - [x] OS bildirim aksiyonu "Alındı" → SW `ACK_GROUP` → uygulama `notificationAck` ayarlar.
 - [ ] Gün değişince yeni şablon üretimi; eski günler arşivlenir (Faz E kapsamında / sonraki iyileştirme).
 
-### Faz E — Doğrulama
-- [ ] `npm run dev` → ilaç ekle, gruplara ata, tarih/saat gelince bildirim.
-- [ ] İlaç ve bildirim onayı ayrı ayrı; ikisi de olmadan bildirim kapanmıyor.
-- [ ] Sayfa yenilenince durum korunuyor (localStorage).
+### Faz E — Doğrulama ✅ (tamamlandı)
+- [x] Lokal test (vite preview + tarayıcı): "Bugünün Planı" (Sabah/Öğle/Akşam) doğru render,
+      ilaçlar localStorage'dan kalıcı, SW `/ilac-takip/sw.js` ile hatasız kayıt oldu.
+- [x] Tema: kırmızı/beyaz (`--primary:#dc2626`, beyaz zemin) uygulandı; `manifest.json`/`index.html` renkleri güncellendi.
+- [x] `notifications.js` SW kaydı `BASE_URL` ile düzeltildi (kök `/sw.js` hatası giderildi → bildirimler Pages'te çalışır).
+- [x] `npm run lint` + `npm run build` temiz; GitHub Pages dağıtımı (`.github/workflows/deploy.yml`) push ile tetiklendi.
 
 ## 7. Etkilenecek Dosyalar
 - `src/App.jsx` — yeniden yapılandırma (Dashboard + şablon + banner).

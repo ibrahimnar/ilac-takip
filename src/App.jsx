@@ -4,6 +4,7 @@ import { migrateMeds, getGroups, buildDailySchedule } from './utils/schedule';
 import { initNotifications, requestPermission, scheduleGroupReminder, showGroupNotification } from './utils/notifications';
 import DailySchedule from './components/DailySchedule';
 import NotificationBanner from './components/NotificationBanner';
+import AssignmentView from './components/AssignmentView';
 import './index.css';
 
 const App = () => {
@@ -137,10 +138,24 @@ const App = () => {
       id: crypto.randomUUID(),
       name: formData.get('name'),
       dosage: formData.get('dosage'),
-      groupIds: formData.getAll('groups'),
+      groupIds: [],
     };
     setMeds([...meds, newMed]);
     setShowMedForm(false);
+  };
+
+  // Bir ilacı bir zaman dilimine ata/çıkar (Uygulama Planı)
+  const toggleAssignment = (medId, groupId) => {
+    setMeds(meds.map((m) => {
+      if (m.id !== medId) return m;
+      const has = m.groupIds?.includes(groupId);
+      return {
+        ...m,
+        groupIds: has
+          ? m.groupIds.filter((id) => id !== groupId)
+          : [...(m.groupIds || []), groupId],
+      };
+    }));
   };
 
   const deleteMed = (id) => {
@@ -317,25 +332,6 @@ const App = () => {
               <form className="glass-card" style={{ marginBottom: '24px' }} onSubmit={addMed}>
                 <input name="name" placeholder="İlaç Adı (örn: Parol)" required />
                 <input name="dosage" placeholder="Dozaj (örn: 500mg)" required />
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                  Alınacağı zaman dilimleri:
-                </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
-                  {groups.map((g) => (
-                    <label
-                      key={g.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                        padding: '8px 12px', borderRadius: '50px',
-                        border: '1px solid var(--glass-border)',
-                        background: 'rgba(255,255,255,0.05)', fontSize: '0.85rem',
-                      }}
-                    >
-                      <input type="checkbox" name="groups" value={g.id} style={{ width: '16px', height: '16px', margin: 0 }} />
-                      {g.icon} {g.label} ({g.time})
-                    </label>
-                  ))}
-                </div>
                 <button type="submit" className="btn-primary" style={{ width: '100%' }}>Kaydet</button>
               </form>
             )}
@@ -376,6 +372,8 @@ const App = () => {
               )}
             </div>
           </section>
+        ) : activeTab === 'plan' ? (
+          <AssignmentView meds={meds} groups={groups} onToggle={toggleAssignment} />
         ) : (
           <section>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -511,6 +509,14 @@ const App = () => {
         >
           <span style={{ fontSize: '1.2rem', marginBottom: '4px' }}>💊</span>
           <span>İlaçlar</span>
+        </div>
+        <div
+          className={`nav-item ${activeTab === 'plan' ? 'active' : ''}`}
+          onClick={() => setActiveTab('plan')}
+          style={{ cursor: 'pointer', textAlign: 'center' }}
+        >
+          <span style={{ fontSize: '1.2rem', marginBottom: '4px' }}>🗓️</span>
+          <span>Plan</span>
         </div>
         <div
           className={`nav-item ${activeTab === 'bp' ? 'active' : ''}`}
