@@ -93,10 +93,31 @@ const App = () => {
         .map((x) => meds.find((mm) => mm.id === x.medId)?.name)
         .filter(Boolean);
 
-      if (now >= gt && !grp.notificationAck) {
+      const passed = now >= gt;
+      const unacked = !grp.notificationAck;
+      const unnotified = !grp.notifiedAt;
+
+      if (passed && unacked) {
         due.push(g.id);
-        showGroupNotification({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
-      } else if (now < gt && !grp.notificationAck) {
+        if (unnotified) {
+          showGroupNotification({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
+          setDailySchedule((prev) => {
+            const gs = prev.groups[g.id];
+            if (!gs || gs.notifiedAt) return prev;
+            const next = {
+              ...prev,
+              groups: {
+                ...prev.groups,
+                [g.id]: { ...gs, notifiedAt: new Date().toISOString() },
+              },
+            };
+            const log = load(KEYS.DAILY_LOG, {});
+            log[next.date] = next;
+            save(KEYS.DAILY_LOG, log);
+            return next;
+          });
+        }
+      } else if (!passed && unacked && unnotified) {
         scheduleGroupReminder({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
       }
     }

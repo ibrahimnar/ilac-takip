@@ -10,7 +10,7 @@ const NotificationBanner = ({ alerts, schedule, groups, meds, onToggleMed, onAck
       style={{
         position: 'fixed',
         left: 0, right: 0, bottom: '70px',
-        zIndex: 150,
+        zIndex: 90,
         padding: '0 16px',
         display: 'grid',
         gap: '12px',
