@@ -12,6 +12,22 @@ export async function initNotifications() {
   try {
     swRegistration = await navigator.serviceWorker.register(base + 'sw.js');
     swWorker = swRegistration.installing || swRegistration.waiting || swRegistration.active;
+
+    if (swRegistration.waiting) {
+      swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+
+    swRegistration.addEventListener('updatefound', () => {
+      const newWorker = swRegistration.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            newWorker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      }
+    });
+
     console.log('Service Worker kaydedildi');
     return true;
   } catch (error) {

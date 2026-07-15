@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ilac-takip-v2';
+const CACHE_NAME = 'ilac-takip-v3';
 const BASE_PATH = '/ilac-takip/';
 const urlsToCache = [
   BASE_PATH,
@@ -24,6 +24,12 @@ self.addEventListener('activate', (event) => {
     })
   );
   self.clients.claim();
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('fetch', (event) => {
