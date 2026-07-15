@@ -7,10 +7,11 @@ export async function initNotifications() {
     return false;
   }
 
+  const base = import.meta.env.BASE_URL || '/';
+
   try {
-    swRegistration = await navigator.serviceWorker.register('/sw.js');
+    swRegistration = await navigator.serviceWorker.register(base + 'sw.js');
     swWorker = swRegistration.installing || swRegistration.waiting || swRegistration.active;
-    
     console.log('Service Worker kaydedildi');
     return true;
   } catch (error) {
@@ -20,60 +21,48 @@ export async function initNotifications() {
 }
 
 export async function requestPermission() {
-  if (!('Notification' in window)) {
-    return 'unsupported';
-  }
-
-  if (Notification.permission === 'granted') {
-    return 'granted';
-  }
-
-  if (Notification.permission === 'denied') {
-    return 'denied';
-  }
-
-  const permission = await Notification.requestPermission();
-  return permission;
+  if (!('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  return Notification.requestPermission();
 }
 
-export function scheduleMedicationReminder(medication) {
-  if (!swRegistration || Notification.permission !== 'granted') {
-    return false;
-  }
-
-  const now = new Date();
-  const [hours, minutes] = medication.time.split(':').map(Number);
-  
-  const reminderTime = new Date();
-  reminderTime.setHours(hours, minutes, 0, 0);
-  
-  if (reminderTime <= now) {
-    reminderTime.setDate(reminderTime.getDate() + 1);
-  }
-
-  const delay = reminderTime.getTime() - now.getTime();
-
-  const message = {
-    type: 'SCHEDULE_NOTIFICATION',
-    medicationId: medication.id,
-    medicationName: medication.name,
-    dosage: medication.dosage,
-    delay: delay
-  };
-
+function postToWorker(message) {
   if (swWorker) {
     swWorker.postMessage(message);
-  } else if (swRegistration.active) {
+  } else if (swRegistration && swRegistration.active) {
     swRegistration.active.postMessage(message);
   }
+}
 
+// Gelecekteki grup zamanı için bildirim kurar (SW, TimestampTrigger ile yönetir).
+export function scheduleGroupReminder({ groupId, label, time, icon, dateKey, meds }) {
+  if (!swRegistration || Notification.permission !== 'granted') return false;
+
+  const [hours, minutes] = time.split(':').map(Number);
+  const target = new Date();
+  target.setHours(hours, minutes, 0, 0);
+  if (target <= new Date()) target.setDate(target.getDate() + 1);
+
+  postToWorker({
+    type: 'SCHEDULE_GROUP_NOTIFICATION',
+    tag: `grp-${dateKey}-${groupId}`,
+    groupId, label, time, icon, dateKey,
+    delay: target.getTime() - Date.now(),
+    medList: (meds || []).join(', '),
+  });
   return true;
 }
 
-export function scheduleAllReminders(meds) {
-  meds.forEach(med => {
-    if (!med.taken) {
-      scheduleMedicationReminder(med);
-    }
+// Zamanı gelmiş/geçmiş grup için anlık bildirim gösterir (SW tekrarı engeller).
+export function showGroupNotification({ groupId, label, time, icon, dateKey, meds }) {
+  if (!swRegistration || Notification.permission !== 'granted') return false;
+
+  postToWorker({
+    type: 'SHOW_GROUP_NOTIFICATION',
+    tag: `grp-${dateKey}-${groupId}`,
+    groupId, label, time, icon, dateKey,
+    medList: (meds || []).join(', '),
   });
+  return true;
 }

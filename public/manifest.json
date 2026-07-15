@@ -4,8 +4,8 @@
   "description": "İlaç ve tansiyon takip uygulaması",
   "start_url": "/ilac-takip/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#4f46e5",
+  "background_color": "#ffffff",
+  "theme_color": "#dc2626",
   "orientation": "portrait",
   "icons": [
     {

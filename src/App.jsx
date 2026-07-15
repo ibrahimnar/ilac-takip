@@ -1,58 +1,135 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { initNotifications, requestPermission, scheduleMedicationReminder, scheduleAllReminders } from './utils/notifications';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { load, save, KEYS } from './utils/storage';
+import { migrateMeds, getGroups, buildDailySchedule } from './utils/schedule';
+import { initNotifications, requestPermission, scheduleGroupReminder, showGroupNotification } from './utils/notifications';
+import DailySchedule from './components/DailySchedule';
+import NotificationBanner from './components/NotificationBanner';
 import './index.css';
 
 const App = () => {
-  const [activeTab, setActiveTab] = useState('meds');
-  const [meds, setMeds] = useState(() => {
-    const saved = localStorage.getItem('meds');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [bpRecords, setBpRecords] = useState(() => {
-    const saved = localStorage.getItem('bp_records');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
+  const [activeTab, setActiveTab] = useState('today');
+
+  const [groups, setGroups] = useState(() => getGroups());
+  const [meds, setMeds] = useState(() => migrateMeds());
+  const [bpRecords, setBpRecords] = useState(() => load(KEYS.BP, []));
+  const [dailySchedule, setDailySchedule] = useState(() => buildDailySchedule(meds, groups));
+
   const [showMedForm, setShowMedForm] = useState(false);
   const [showBpForm, setShowBpForm] = useState(false);
+  const [showGroups, setShowGroups] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(null);
   const [notificationStatus, setNotificationStatus] = useState('loading');
-  const [reminderStatus, setReminderStatus] = useState('');
+  const [activeAlerts, setActiveAlerts] = useState([]);
+
+  // Gruplar veya ilaçlar değişince günlük şablonu yeniden üret (taken/ack korunur)
+  useEffect(() => {
+    setDailySchedule(buildDailySchedule(meds, groups));
+  }, [meds, groups]);
+
+  // Persistence
+  useEffect(() => { save(KEYS.MEDS, meds); }, [meds]);
+  useEffect(() => { save(KEYS.GROUPS, groups); }, [groups]);
+  useEffect(() => { save(KEYS.BP, bpRecords); }, [bpRecords]);
+
+  const persistSchedule = (next) => {
+    setDailySchedule(next);
+    const log = load(KEYS.DAILY_LOG, {});
+    log[next.date] = next;
+    save(KEYS.DAILY_LOG, log);
+  };
 
   // Bildirim iznini kontrol et ve iste
   useEffect(() => {
-    async function setupNotifications() {
+    async function setup() {
       const initialized = await initNotifications();
       if (initialized) {
-        const permission = await requestPermission();
-        setNotificationStatus(permission);
-        
-        if (permission === 'granted') {
-          scheduleAllReminders(meds);
-        }
+        setNotificationStatus(await requestPermission());
       } else {
         setNotificationStatus('unsupported');
       }
     }
-    setupNotifications();
+    setup();
   }, []);
 
-  // İlaçlar değiştiğinde hatırlatmaları yeniden kur
+  // Güncel state'e erişim için ref (tick kapatmalarında bayat veri önler)
+  const stateRef = useRef({ meds, groups, dailySchedule });
   useEffect(() => {
-    if (notificationStatus === 'granted' && meds.length > 0) {
-      scheduleAllReminders(meds);
+    stateRef.current = { meds, groups, dailySchedule };
+  });
+
+  // Grup bildirimlerini kur + vakti gelenleri tetikle
+  const evaluateAlerts = useCallback(() => {
+    const { meds, groups, dailySchedule } = stateRef.current;
+    const now = new Date();
+    const due = [];
+
+    for (const g of groups) {
+      const grp = dailySchedule.groups[g.id];
+      if (!grp) continue;
+      const [h, m] = g.time.split(':').map(Number);
+      const gt = new Date(now);
+      gt.setHours(h, m, 0, 0);
+
+      const medNames = grp.meds
+        .map((x) => meds.find((mm) => mm.id === x.medId)?.name)
+        .filter(Boolean);
+
+      if (now >= gt && !grp.notificationAck) {
+        due.push(g.id);
+        showGroupNotification({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
+      } else if (now < gt && !grp.notificationAck) {
+        scheduleGroupReminder({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
+      }
     }
-  }, [meds, notificationStatus]);
-
-  // Persistence
-  useEffect(() => {
-    localStorage.setItem('meds', JSON.stringify(meds));
-  }, [meds]);
+    setActiveAlerts(due);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('bp_records', JSON.stringify(bpRecords));
-  }, [bpRecords]);
+    if (notificationStatus !== 'granted') return;
+    evaluateAlerts();
+    const id = setInterval(evaluateAlerts, 30000);
+    return () => clearInterval(id);
+  }, [notificationStatus, evaluateAlerts]);
 
-  // Handlers
+  // Bildirim zamanı seviyesinde onay (Faz D: iki seviyeli kapanış)
+  const ackGroup = useCallback((groupId) => {
+    setDailySchedule((prev) => {
+      const grp = prev.groups[groupId];
+      if (!grp) return prev;
+      const next = {
+        ...prev,
+        groups: {
+          ...prev.groups,
+          [groupId]: { ...grp, notificationAck: true },
+        },
+      };
+      const log = load(KEYS.DAILY_LOG, {});
+      log[next.date] = next;
+      save(KEYS.DAILY_LOG, log);
+      return next;
+    });
+    setActiveAlerts((a) => a.filter((id) => id !== groupId));
+  }, []);
+
+  // Service Worker'dan gelen onay mesajı (bildirim aksiyonu "Alındı")
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event) => {
+      if (event.data?.type === 'ACK_GROUP') {
+        ackGroup(event.data.groupId);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [ackGroup]);
+
+  const handleEnableNotifications = async () => {
+    const permission = await requestPermission();
+    setNotificationStatus(permission);
+    if (permission === 'granted') evaluateAlerts();
+  };
+
+  // İlaç işlemleri
   const addMed = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -60,20 +137,61 @@ const App = () => {
       id: crypto.randomUUID(),
       name: formData.get('name'),
       dosage: formData.get('dosage'),
-      time: formData.get('time'),
-      taken: false,
-      date: new Date().toLocaleDateString()
+      groupIds: formData.getAll('groups'),
     };
     setMeds([...meds, newMed]);
     setShowMedForm(false);
-    
-    if (notificationStatus === 'granted') {
-      scheduleMedicationReminder(newMed);
-      setReminderStatus(`${newMed.name} için hatırlatma kuruldu!`);
-      setTimeout(() => setReminderStatus(''), 3000);
-    }
   };
 
+  const deleteMed = (id) => {
+    setMeds(meds.filter((m) => m.id !== id));
+    // Günlük şablondan da çıkar
+    const next = { ...dailySchedule, groups: {} };
+    for (const [gid, grp] of Object.entries(dailySchedule.groups)) {
+      next.groups[gid] = { ...grp, meds: grp.meds.filter((x) => x.medId !== id) };
+    }
+    persistSchedule(next);
+  };
+
+  // Zaman grubu işlemleri
+  const addOrUpdateGroup = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const label = formData.get('label').trim();
+    const time = formData.get('time');
+    if (!label || !time) return;
+
+    if (editingGroup) {
+      setGroups(groups.map((g) =>
+        g.id === editingGroup.id ? { ...g, label, time } : g));
+      setEditingGroup(null);
+    } else {
+      const newGroup = {
+        id: crypto.randomUUID(),
+        label,
+        time,
+        icon: '⏰',
+      };
+      setGroups([...groups, newGroup]);
+    }
+    e.target.reset();
+  };
+
+  const deleteGroup = (id) => {
+    setGroups(groups.filter((g) => g.id !== id));
+    // İlaçlardan bu grubu çıkar
+    setMeds(meds.map((m) =>
+      m.groupIds?.includes(id)
+        ? { ...m, groupIds: m.groupIds.filter((g) => g !== id) }
+        : m));
+  };
+
+  const startEditGroup = (g) => {
+    setEditingGroup(g);
+    setShowGroups(true);
+  };
+
+  // Tansiyon işlemleri
   const addBp = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -82,45 +200,48 @@ const App = () => {
       systolic: formData.get('systolic'),
       diastolic: formData.get('diastolic'),
       pulse: formData.get('pulse'),
-      timestamp: new Date().toLocaleString()
+      timestamp: new Date().toLocaleString(),
     };
     setBpRecords([newBp, ...bpRecords]);
     setShowBpForm(false);
   };
 
-  const toggleMed = (id) => {
-    setMeds(meds.map(m => m.id === id ? { ...m, taken: !m.taken } : m));
-  };
-
-  const deleteMed = (id) => {
-    setMeds(meds.filter(m => m.id !== id));
-  };
-
   const deleteBp = (id) => {
-    setBpRecords(bpRecords.filter(r => r.id !== id));
+    setBpRecords(bpRecords.filter((r) => r.id !== id));
   };
 
-  const handleEnableNotifications = async () => {
-    const permission = await requestPermission();
-    setNotificationStatus(permission);
-    if (permission === 'granted') {
-      scheduleAllReminders(meds);
-    }
+  // Günlük şablonda ilaç bazlı onay (Faz B)
+  const toggleMedTaken = (groupId, medId) => {
+    const grp = dailySchedule.groups[groupId];
+    if (!grp) return;
+    const next = {
+      ...dailySchedule,
+      groups: {
+        ...dailySchedule.groups,
+        [groupId]: {
+          ...grp,
+          meds: grp.meds.map((m) =>
+            m.medId === medId ? { ...m, taken: !m.taken } : m),
+        },
+      },
+    };
+    persistSchedule(next);
   };
 
-  const getNotificationBadge = () => {
-    if (notificationStatus === 'loading') return '⏳';
-    if (notificationStatus === 'granted') return '🔔';
-    if (notificationStatus === 'denied') return '🔕';
-    return '⚠️';
+  const allTakenInGroup = (groupId) => {
+    const grp = dailySchedule.groups[groupId];
+    if (!grp || grp.meds.length === 0) return;
+    const next = {
+      ...dailySchedule,
+      groups: {
+        ...dailySchedule.groups,
+        [groupId]: { ...grp, meds: grp.meds.map((m) => ({ ...m, taken: true })) },
+      },
+    };
+    persistSchedule(next);
   };
 
-  const getNotificationText = () => {
-    if (notificationStatus === 'loading') return 'Kontrol ediliyor...';
-    if (notificationStatus === 'granted') return 'Bildirimler açık';
-    if (notificationStatus === 'denied') return 'Bildirimler engellendi';
-    return 'Bildirim izni gerekli';
-  };
+  const groupLabel = (id) => groups.find((g) => g.id === id)?.label || id;
 
   return (
     <div className="container">
@@ -128,45 +249,63 @@ const App = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '2rem', marginBottom: '8px' }}>Sağlık Takibi</h1>
-            <p style={{ color: 'var(--text-muted)' }}>Bugün nasılsın?</p>
+            <p style={{ color: 'var(--text-muted)' }}>
+              {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </p>
           </div>
-          <button
-            onClick={handleEnableNotifications}
-            style={{
-              background: notificationStatus === 'granted' ? 'var(--success)' : 'var(--warning)',
-              padding: '8px 12px',
-              borderRadius: '12px',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            {getNotificationBadge()} {getNotificationText()}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleEnableNotifications}
+              disabled={notificationStatus === 'loading'}
+              title={notificationStatus === 'denied' ? 'Bildirimler engellendi' : 'Bildirim izni'}
+              style={{
+                background: notificationStatus === 'granted' ? 'var(--success)' : 'var(--glass)',
+                border: '1px solid var(--glass-border)',
+                padding: '8px 12px',
+                borderRadius: '12px',
+                fontSize: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                opacity: notificationStatus === 'loading' ? 0.6 : 1,
+              }}
+            >
+              {notificationStatus === 'granted' ? '🔔' : notificationStatus === 'denied' ? '🔕' : '🔔 İzin'}
+            </button>
+            <button
+              onClick={() => setShowGroups(true)}
+              style={{
+                background: 'var(--glass)',
+                border: '1px solid var(--glass-border)',
+                padding: '8px 12px',
+                borderRadius: '12px',
+                fontSize: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              ⚙️ Gruplar
+            </button>
+          </div>
         </div>
-        
-        {reminderStatus && (
-          <div style={{
-            marginTop: '12px',
-            padding: '12px',
-            background: 'var(--success)',
-            borderRadius: '12px',
-            textAlign: 'center',
-            fontSize: '0.9rem'
-          }}>
-            ✅ {reminderStatus}
-          </div>
-        )}
       </header>
 
       <main style={{ paddingBottom: '100px' }}>
-        {activeTab === 'meds' ? (
+        {activeTab === 'today' ? (
+          <DailySchedule
+            schedule={dailySchedule}
+            meds={meds}
+            groups={groups}
+            onToggleMed={toggleMedTaken}
+            onAllTaken={allTakenInGroup}
+          />
+        ) : activeTab === 'meds' ? (
           <section>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h2>İlaçlarım</h2>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 style={{ padding: '8px 16px', borderRadius: '50px' }}
                 onClick={() => setShowMedForm(!showMedForm)}
               >
@@ -178,7 +317,25 @@ const App = () => {
               <form className="glass-card" style={{ marginBottom: '24px' }} onSubmit={addMed}>
                 <input name="name" placeholder="İlaç Adı (örn: Parol)" required />
                 <input name="dosage" placeholder="Dozaj (örn: 500mg)" required />
-                <input name="time" type="time" required />
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                  Alınacağı zaman dilimleri:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+                  {groups.map((g) => (
+                    <label
+                      key={g.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 12px', borderRadius: '50px',
+                        border: '1px solid var(--glass-border)',
+                        background: 'rgba(255,255,255,0.05)', fontSize: '0.85rem',
+                      }}
+                    >
+                      <input type="checkbox" name="groups" value={g.id} style={{ width: '16px', height: '16px', margin: 0 }} />
+                      {g.icon} {g.label} ({g.time})
+                    </label>
+                  ))}
+                </div>
                 <button type="submit" className="btn-primary" style={{ width: '100%' }}>Kaydet</button>
               </form>
             )}
@@ -189,26 +346,26 @@ const App = () => {
                   Henüz ilaç eklenmemiş.
                 </div>
               ) : (
-                meds.map(med => (
-                  <div key={med.id} className={`glass-card`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={med.taken} 
-                        onChange={() => toggleMed(med.id)}
-                        style={{ width: '20px', height: '20px', margin: 0 }}
-                      />
-                      <div style={{ textDecoration: med.taken ? 'line-through' : 'none', opacity: med.taken ? 0.5 : 1 }}>
-                        <h4 style={{ fontSize: '1.1rem' }}>{med.name}</h4>
-                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                          {med.dosage} • {med.time}
-                          {!med.taken && notificationStatus === 'granted' && (
-                            <span style={{ marginLeft: '8px', color: 'var(--success)' }}>🔔</span>
-                          )}
-                        </p>
+                meds.map((med) => (
+                  <div key={med.id} className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ fontSize: '1.1rem' }}>{med.name}</h4>
+                      <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{med.dosage}</p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {(med.groupIds || []).map((gid) => (
+                          <span
+                            key={gid}
+                            style={{
+                              fontSize: '0.75rem', padding: '3px 10px', borderRadius: '50px',
+                              background: 'rgba(79,70,229,0.2)', color: 'var(--primary)',
+                            }}
+                          >
+                            {groupLabel(gid)}
+                          </span>
+                        ))}
                       </div>
                     </div>
-                    <button 
+                    <button
                       onClick={() => deleteMed(med.id)}
                       style={{ background: 'transparent', color: 'var(--error)', padding: '4px' }}
                     >
@@ -223,8 +380,8 @@ const App = () => {
           <section>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h2>Tansiyon Takibi</h2>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 style={{ padding: '8px 16px', borderRadius: '50px' }}
                 onClick={() => setShowBpForm(!showBpForm)}
               >
@@ -249,7 +406,7 @@ const App = () => {
                   Henüz kayıt bulunmuyor.
                 </div>
               ) : (
-                bpRecords.map(record => (
+                bpRecords.map((record) => (
                   <div key={record.id} className="glass-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                       <div>
@@ -261,7 +418,7 @@ const App = () => {
                           <span style={{ fontSize: '0.8rem', marginLeft: '4px' }}>mmHg</span>
                         </div>
                       </div>
-                      <button 
+                      <button
                         onClick={() => deleteBp(record.id)}
                         style={{ background: 'transparent', color: 'var(--error)', padding: '4px' }}
                       >
@@ -280,8 +437,74 @@ const App = () => {
         )}
       </main>
 
+      {showGroups && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '20px',
+          }}
+          onClick={() => { setShowGroups(false); setEditingGroup(null); }}
+        >
+          <div
+            className="glass-card"
+            style={{ width: '100%', maxWidth: '460px', maxHeight: '85vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3>Zaman Dilimleri</h3>
+              <button onClick={() => { setShowGroups(false); setEditingGroup(null); }} style={{ background: 'transparent', color: 'var(--text-muted)' }}>✕</button>
+            </div>
+
+            <form onSubmit={addOrUpdateGroup} style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input name="label" placeholder="Etiket (örn: Sabah)" defaultValue={editingGroup?.label || ''} style={{ marginBottom: 0 }} required />
+                <input name="time" type="time" defaultValue={editingGroup?.time || '08:00'} style={{ marginBottom: 0, width: '120px' }} required />
+              </div>
+              <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: '12px' }}>
+                {editingGroup ? 'Güncelle' : 'Ekle'}
+              </button>
+            </form>
+
+            <div style={{ display: 'grid', gap: '10px' }}>
+              {groups.map((g) => (
+                <div key={g.id} className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '1.3rem' }}>{g.icon}</span>
+                    <div>
+                      <h4>{g.label}</h4>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{g.time}</p>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => startEditGroup(g)} style={{ background: 'transparent', color: 'var(--primary)' }}>✏️</button>
+                    <button onClick={() => deleteGroup(g.id)} style={{ background: 'transparent', color: 'var(--error)' }}>🗑️</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <NotificationBanner
+        alerts={activeAlerts}
+        schedule={dailySchedule}
+        groups={groups}
+        meds={meds}
+        onToggleMed={toggleMedTaken}
+        onAckGroup={ackGroup}
+      />
+
       <nav className="nav-bar">
-        <div 
+        <div
+          className={`nav-item ${activeTab === 'today' ? 'active' : ''}`}
+          onClick={() => setActiveTab('today')}
+          style={{ cursor: 'pointer', textAlign: 'center' }}
+        >
+          <span style={{ fontSize: '1.2rem', marginBottom: '4px' }}>📅</span>
+          <span>Bugün</span>
+        </div>
+        <div
           className={`nav-item ${activeTab === 'meds' ? 'active' : ''}`}
           onClick={() => setActiveTab('meds')}
           style={{ cursor: 'pointer', textAlign: 'center' }}
@@ -289,7 +512,7 @@ const App = () => {
           <span style={{ fontSize: '1.2rem', marginBottom: '4px' }}>💊</span>
           <span>İlaçlar</span>
         </div>
-        <div 
+        <div
           className={`nav-item ${activeTab === 'bp' ? 'active' : ''}`}
           onClick={() => setActiveTab('bp')}
           style={{ cursor: 'pointer', textAlign: 'center' }}
