@@ -17,9 +17,15 @@ const App = () => {
     return (saved || []).map((r) => {
       if (!r.timestamp) return r;
       if (String(r.timestamp).includes('T')) return r;
-      const d = new Date(r.timestamp);
-      if (isNaN(d.getTime())) return r;
-      return { ...r, timestamp: d.toISOString().slice(0, 16) };
+      const s = String(r.timestamp);
+      const m = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\s+(\d{1,2}):(\d{1,2})/);
+      if (m) {
+        const [, d, mo, y, h, mi] = m;
+        return { ...r, timestamp: `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}T${h.padStart(2,'0')}:${mi.padStart(2,'0')}` };
+      }
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return { ...r, timestamp: d.toISOString().slice(0, 16) };
+      return r;
     });
   });
   const [dailySchedule, setDailySchedule] = useState(() => buildDailySchedule(meds, groups));
@@ -275,16 +281,32 @@ const App = () => {
     setBpRecords((prev) => prev.map((r) => (r.id === id ? { ...r, timestamp: newTs } : r)));
   };
 
+  const toDateKey = (ts) => {
+    if (!ts) return null;
+    return String(ts).slice(0, 10);
+  };
+
+  const formatBpTimestamp = (ts) => {
+    if (!ts) return '';
+    const s = String(ts);
+    if (s.includes('T')) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d.toLocaleString('tr-TR');
+      return s;
+    }
+    return s;
+  };
+
   const filteredBpRecords = bpRecords.filter((r) => {
-    if (!r.timestamp) return true;
-    const day = String(r.timestamp).slice(0, 10);
+    const day = toDateKey(r.timestamp);
+    if (!day) return true;
     if (bpFrom && day < bpFrom) return false;
     if (bpTo && day > bpTo) return false;
     return true;
   });
 
   const buildBpShareTable = () => {
-    const rows = filteredBpRecords.map((r) => `${r.timestamp}\t${r.systolic}/${r.diastolic} mmHg\t${r.pulse} bpm`);
+    const rows = filteredBpRecords.map((r) => `${formatBpTimestamp(r.timestamp)}\t${r.systolic}/${r.diastolic} mmHg\t${r.pulse} bpm`);
     return ['Tarih\tSistolik/Diastolik\tNabız', ...rows].join('\n');
   };
 
@@ -472,7 +494,7 @@ const App = () => {
                           <>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                               <div>
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{record.timestamp}</p>
+                                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{formatBpTimestamp(record.timestamp)}</p>
                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginTop: '4px' }}>
                                   <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>{record.systolic}</span>
                                   <span style={{ color: 'var(--text-muted)' }}>/</span>
