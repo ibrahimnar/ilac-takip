@@ -7,7 +7,7 @@ function formatDate(dateKey) {
   });
 }
 
-const DailySchedule = ({ schedule, meds, groups, onToggleMed, onAllTaken }) => {
+const DailySchedule = ({ schedule, meds, groups, onToggleMed, onAllTaken, onAckGroup }) => {
   const medById = (id) => meds.find((m) => m.id === id);
   const groupList = groups.filter((g) => schedule.groups[g.id]);
 
@@ -24,9 +24,14 @@ const DailySchedule = ({ schedule, meds, groups, onToggleMed, onAllTaken }) => {
         {groupList.map((g) => {
           const grp = schedule.groups[g.id];
           const allTaken = grp.meds.length > 0 && grp.meds.every((m) => m.taken);
+          const now = new Date();
+          const [gh, gm] = g.time.split(':').map(Number);
+          const gt = new Date(now);
+          gt.setHours(gh, gm, 0, 0);
+          const isDue = now >= gt && !grp.notificationAck;
 
           return (
-            <div key={g.id} className="glass-card">
+            <div key={g.id} className="glass-card" style={isDue ? { borderColor: 'var(--warning)', boxShadow: '0 8px 32px 0 rgba(245,158,11,0.25)' } : undefined}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontSize: '1.6rem' }}>{g.icon}</span>
@@ -35,20 +40,36 @@ const DailySchedule = ({ schedule, meds, groups, onToggleMed, onAllTaken }) => {
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{g.time}</p>
                   </div>
                 </div>
-                {grp.meds.length > 0 && (
-                  <button
-                    onClick={() => onAllTaken(g.id)}
-                    disabled={allTaken}
-                    style={{
-                      background: allTaken ? 'var(--glass)' : 'var(--primary)',
-                      color: allTaken ? 'var(--text-muted)' : 'white',
-                      padding: '6px 12px', borderRadius: '50px', fontSize: '0.8rem',
-                      opacity: allTaken ? 0.6 : 1,
-                    }}
-                  >
-                    {allTaken ? '✓ Tamam' : 'Tümü Alındı'}
-                  </button>
-                )}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {grp.meds.length > 0 && (
+                    <button
+                      onClick={() => onAllTaken(g.id)}
+                      disabled={allTaken}
+                      style={{
+                        background: allTaken ? 'var(--glass)' : 'var(--primary)',
+                        color: allTaken ? 'var(--text-muted)' : 'white',
+                        padding: '6px 12px', borderRadius: '50px', fontSize: '0.8rem',
+                        opacity: allTaken ? 0.6 : 1,
+                      }}
+                    >
+                      {allTaken ? '✓ Tamam' : 'Tümü Alındı'}
+                    </button>
+                  )}
+                  {isDue && (
+                    <button
+                      onClick={() => onAckGroup(g.id)}
+                      disabled={!allTaken}
+                      style={{
+                        background: allTaken ? 'var(--success)' : 'var(--glass)',
+                        color: allTaken ? 'white' : 'var(--text-muted)',
+                        padding: '6px 12px', borderRadius: '50px', fontSize: '0.8rem',
+                        opacity: allTaken ? 1 : 0.7,
+                      }}
+                    >
+                      {allTaken ? '✓ Bildirimi Kapat' : 'Önce ilaçları işaretleyin'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {grp.meds.length === 0 ? (

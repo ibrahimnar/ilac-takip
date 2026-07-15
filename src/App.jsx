@@ -3,7 +3,6 @@ import { load, save, KEYS } from './utils/storage';
 import { migrateMeds, getGroups, buildDailySchedule } from './utils/schedule';
 import { initNotifications, requestPermission, scheduleGroupReminder, showGroupNotification } from './utils/notifications';
 import DailySchedule from './components/DailySchedule';
-import NotificationBanner from './components/NotificationBanner';
 import AssignmentView from './components/AssignmentView';
 import './index.css';
 
@@ -35,7 +34,6 @@ const App = () => {
   const [showGroups, setShowGroups] = useState(false);
   const [editingGroup, setEditingGroup] = useState(null);
   const [notificationStatus, setNotificationStatus] = useState('loading');
-  const [activeAlerts, setActiveAlerts] = useState([]);
   const [bpFrom, setBpFrom] = useState('');
   const [bpTo, setBpTo] = useState('');
   const [editingBpId, setEditingBpId] = useState(null);
@@ -80,7 +78,6 @@ const App = () => {
   const evaluateAlerts = useCallback(() => {
     const { meds, groups, dailySchedule } = stateRef.current;
     const now = new Date();
-    const due = [];
 
     for (const g of groups) {
       const grp = dailySchedule.groups[g.id];
@@ -98,7 +95,6 @@ const App = () => {
       const unnotified = !grp.notifiedAt;
 
       if (passed && unacked) {
-        due.push(g.id);
         if (unnotified) {
           showGroupNotification({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
           setDailySchedule((prev) => {
@@ -121,7 +117,6 @@ const App = () => {
         scheduleGroupReminder({ groupId: g.id, label: g.label, time: g.time, icon: g.icon, dateKey: dailySchedule.date, meds: medNames });
       }
     }
-    setActiveAlerts(due);
   }, []);
 
   useEffect(() => {
@@ -148,7 +143,6 @@ const App = () => {
       save(KEYS.DAILY_LOG, log);
       return next;
     });
-    setActiveAlerts((a) => a.filter((id) => id !== groupId));
   }, []);
 
   // Service Worker'dan gelen onay mesajı (bildirim aksiyonu "Alındı")
@@ -396,6 +390,7 @@ const App = () => {
             groups={groups}
             onToggleMed={toggleMedTaken}
             onAllTaken={allTakenInGroup}
+            onAckGroup={ackGroup}
           />
         ) : activeTab === 'meds' ? (
           <section>
@@ -592,15 +587,6 @@ const App = () => {
           </div>
         </div>
       )}
-
-      <NotificationBanner
-        alerts={activeAlerts}
-        schedule={dailySchedule}
-        groups={groups}
-        meds={meds}
-        onToggleMed={toggleMedTaken}
-        onAckGroup={ackGroup}
-      />
 
       <nav className="nav-bar">
         <div
