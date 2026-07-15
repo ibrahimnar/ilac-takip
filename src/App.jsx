@@ -12,7 +12,16 @@ const App = () => {
 
   const [groups, setGroups] = useState(() => getGroups());
   const [meds, setMeds] = useState(() => migrateMeds());
-  const [bpRecords, setBpRecords] = useState(() => load(KEYS.BP, []));
+  const [bpRecords, setBpRecords] = useState(() => {
+    const saved = load(KEYS.BP, []);
+    return (saved || []).map((r) => {
+      if (!r.timestamp) return r;
+      if (String(r.timestamp).includes('T')) return r;
+      const d = new Date(r.timestamp);
+      if (isNaN(d.getTime())) return r;
+      return { ...r, timestamp: d.toISOString().slice(0, 16) };
+    });
+  });
   const [dailySchedule, setDailySchedule] = useState(() => buildDailySchedule(meds, groups));
 
   const [showMedForm, setShowMedForm] = useState(false);
@@ -21,6 +30,9 @@ const App = () => {
   const [editingGroup, setEditingGroup] = useState(null);
   const [notificationStatus, setNotificationStatus] = useState('loading');
   const [activeAlerts, setActiveAlerts] = useState([]);
+  const [bpFrom, setBpFrom] = useState('');
+  const [bpTo, setBpTo] = useState('');
+  const [editingBpId, setEditingBpId] = useState(null);
 
   // Gruplar veya ilaçlar değişince günlük şablonu yeniden üret (taken/ack korunur)
   useEffect(() => {
@@ -210,12 +222,13 @@ const App = () => {
   const addBp = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
+    const ts = formData.get('timestamp') || new Date().toISOString();
     const newBp = {
       id: crypto.randomUUID(),
       systolic: formData.get('systolic'),
       diastolic: formData.get('diastolic'),
       pulse: formData.get('pulse'),
-      timestamp: new Date().toLocaleString(),
+      timestamp: ts,
     };
     setBpRecords([newBp, ...bpRecords]);
     setShowBpForm(false);
@@ -257,6 +270,32 @@ const App = () => {
   };
 
   const groupLabel = (id) => groups.find((g) => g.id === id)?.label || id;
+
+  const updateBpTimestamp = (id, newTs) => {
+    setBpRecords((prev) => prev.map((r) => (r.id === id ? { ...r, timestamp: newTs } : r)));
+  };
+
+  const filteredBpRecords = bpRecords.filter((r) => {
+    if (!r.timestamp) return true;
+    const day = String(r.timestamp).slice(0, 10);
+    if (bpFrom && day < bpFrom) return false;
+    if (bpTo && day > bpTo) return false;
+    return true;
+  });
+
+  const buildBpShareTable = () => {
+    const rows = filteredBpRecords.map((r) => `${r.timestamp}\t${r.systolic}/${r.diastolic} mmHg\t${r.pulse} bpm`);
+    return ['Tarih\tSistolik/Diastolik\tNabız', ...rows].join('\n');
+  };
+
+  const shareBp = (channel) => {
+    const text = encodeURIComponent(buildBpShareTable());
+    if (channel === 'mail') {
+      window.open(`mailto:?subject=Tansiyon%20%C3%96l%C3%87%C3%BCmleri&body=${text}`);
+    } else {
+      window.open(`https://wa.me/?text=${text}`);
+    }
+  };
 
   return (
     <div className="container">
@@ -394,41 +433,68 @@ const App = () => {
                   <input name="diastolic" type="number" placeholder="Küçük (Dia)" required />
                 </div>
                 <input name="pulse" type="number" placeholder="Nabız (Pulse)" required />
-                <button type="submit" className="btn-primary" style={{ width: '100%' }}>Kaydet</button>
+                <input name="timestamp" type="datetime-local" defaultValue={new Date().toISOString().slice(0,16)} style={{ marginBottom: 0 }} />
+                <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: '12px' }}>Kaydet</button>
               </form>
             )}
 
-            <div style={{ display: 'grid', gap: '16px' }}>
-              {bpRecords.length === 0 ? (
+            <div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px', alignItems: 'center' }}>
+                <input type="date" value={bpFrom} onChange={(e) => setBpFrom(e.target.value)} style={{ marginBottom: 0 }} />
+                <span style={{ color: 'var(--text-muted)' }}>-</span>
+                <input type="date" value={bpTo} onChange={(e) => setBpTo(e.target.value)} style={{ marginBottom: 0 }} />
+                <button onClick={() => { setBpFrom(''); setBpTo(''); }} style={{ background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-muted)', padding: '8px 12px' }}>Temizle</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                  <button onClick={() => shareBp('mail')} style={{ background: 'var(--glass)', border: '1px solid var(--glass-border)', padding: '8px 12px', borderRadius: '12px', fontSize: '0.8rem' }}>📧 Mail</button>
+                  <button onClick={() => shareBp('whatsapp')} style={{ background: 'var(--glass)', border: '1px solid var(--glass-border)', padding: '8px 12px', borderRadius: '12px', fontSize: '0.8rem' }}>💬 WhatsApp</button>
+                </div>
+              </div>
+
+              {filteredBpRecords.length === 0 ? (
                 <div className="glass-card" style={{ textAlign: 'center', opacity: 0.7 }}>
-                  Henüz kayıt bulunmuyor.
+                  {bpRecords.length === 0 ? 'Henüz kayıt bulunmuyor.' : 'Seçilen aralıkta kayıt yok.'}
                 </div>
               ) : (
-                bpRecords.map((record) => (
-                  <div key={record.id} className="glass-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                      <div>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{record.timestamp}</p>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginTop: '4px' }}>
-                          <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>{record.systolic}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>/</span>
-                          <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>{record.diastolic}</span>
-                          <span style={{ fontSize: '0.8rem', marginLeft: '4px' }}>mmHg</span>
-                        </div>
+                <div style={{ display: 'grid', gap: '16px' }}>
+                  {filteredBpRecords.map((record) => {
+                    const isEditing = editingBpId === record.id;
+                    return (
+                      <div key={record.id} className="glass-card">
+                        {isEditing ? (
+                          <form onSubmit={(e) => { e.preventDefault(); const fd = new FormData(e.target); updateBpTimestamp(record.id, fd.get('timestamp')); setEditingBpId(null); }} style={{ display: 'grid', gap: '8px' }}>
+                            <input name="timestamp" type="datetime-local" defaultValue={String(record.timestamp).slice(0,16)} required />
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button type="submit" className="btn-primary" style={{ flex: 1 }}>Kaydet</button>
+                              <button type="button" onClick={() => setEditingBpId(null)} style={{ background: 'var(--glass)', border: '1px solid var(--glass-border)', flex: 1 }}>İptal</button>
+                            </div>
+                          </form>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                              <div>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{record.timestamp}</p>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginTop: '4px' }}>
+                                  <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>{record.systolic}</span>
+                                  <span style={{ color: 'var(--text-muted)' }}>/</span>
+                                  <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>{record.diastolic}</span>
+                                  <span style={{ fontSize: '0.8rem', marginLeft: '4px' }}>mmHg</span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                <button onClick={() => setEditingBpId(record.id)} style={{ background: 'transparent', color: 'var(--primary)', padding: '4px' }}>✏️</button>
+                                <button onClick={() => deleteBp(record.id)} style={{ background: 'transparent', color: 'var(--error)', padding: '4px' }}>🗑️</button>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ color: 'var(--secondary)' }}>❤️</span>
+                              <span>{record.pulse} <small>bpm</small></span>
+                            </div>
+                          </>
+                        )}
                       </div>
-                      <button
-                        onClick={() => deleteBp(record.id)}
-                        style={{ background: 'transparent', color: 'var(--error)', padding: '4px' }}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ color: 'var(--secondary)' }}>❤️</span>
-                      <span>{record.pulse} <small>bpm</small></span>
-                    </div>
-                  </div>
-                ))
+                    );
+                  })}
+                </div>
               )}
             </div>
           </section>
